@@ -1,0 +1,73 @@
+
+        <h2>📋 Step 4: Common Fixes</h2>
+        <ul>
+            <li><button onclick="copyToClipboard('https://covalent-solely-elnora.ngrok-free.dev/api/auth/callback/spotify')">Copy Redirect URI</button> and paste EXACTLY into Spotify Dashboard</li>
+            <li><button onclick="openIncognito()">Open in Incognito</button> to avoid cookie issues</li>
+            <li><button onclick="clearCache()">Clear Browser Cache</button> and try again</li>
+            <li><button onclick="restartServer()">Restart Server</button> after changing .env</li>
+        </ul>
+    </div>
+    
+    <div class="step important">
+        <h2>🆘 Still Not Working?</h2>
+        <p>Check these:</p>
+        <ol>
+            <li>Is your Spotify app in <strong>Development mode</strong>?</li>
+            <li>Is your account <strong>whitelisted</strong> in Spotify Dashboard?</li>
+            <li>Are there any <strong>firewall/security software</strong> blocking connections?</li>
+            <li>Try on a <strong>different network</strong> (some networks block ngrok)</li>
+        </ol>
+    </div>
+    
+    <script>
+        function checkURIs() {
+            const dashboardURI = document.getElementById('dashboard-uri').textContent;
+            const envURI = document.getElementById('env-uri').textContent;
+            
+            if (dashboardURI === envURI) {
+                document.getElementById('uri-result').innerHTML = 
+                    '<span style="color: green; font-weight: bold;">✅ URIs match perfectly!</span>';
+            } else {
+                document.getElementById('uri-result').innerHTML = 
+                    '<span style="color: red; font-weight: bold;">❌ URIs do NOT match!</span>';
+            }
+        }
+        
+        function testOAuth() {
+            const clientId = 'cff193fc95f94392947150b50f384e30';
+            const redirectUri = 'https://covalent-solely-elnora.ngrok-free.dev/api/auth/callback/spotify';
+            const scope = 'user-read-private user-read-email';
+            
+            const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}`;
+            
+            document.getElementById('oauth-result').innerHTML = 
+                `<p>Testing OAuth with URL:</p><pre>${authUrl}</pre><p><a href="${authUrl}" target="_blank">Click here to test</a></p>`;
+            
+            window.open(authUrl, '_blank');
+        }
+        
+        function checkNgrok() {
+            document.getElementById('ngrok-result').innerHTML = 
+                '<p>Open <a href="http://localhost:4040" target="_blank">http://localhost:4040</a> to check ngrok status</p>';
+        }
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard: ' + text);
+            });
+        }
+        
+        function openIncognito() {
+            alert('Please manually open an incognito window and try the login there');
+        }
+        
+        function clearCache() {
+            alert('Please clear your browser cache manually (Ctrl+Shift+Del)');
+        }
+        
+        function restartServer() {
+            alert('Stop your server with Ctrl+C, then run "npm run dev" again');
+        }
+    </script>
+</body>
+</html>

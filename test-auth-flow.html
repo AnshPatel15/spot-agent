@@ -1,0 +1,141 @@
+
+        <button onclick="testSpotifyOAuth()">Test Spotify OAuth</button>
+        <div id="oauth-result"></div>
+    </div>
+
+    <div class="test-step">
+        <h3>🍪 Step 5: Check Cookies</h3>
+        <p>Verify cookies are being set correctly:</p>
+        <button onclick="checkCookies()">Check Cookies</button>
+        <div id="cookies-result"></div>
+    </div>
+
+    <div class="test-step">
+        <h3>🔄 Step 6: Full Auth Flow Test</h3>
+        <p>Test the complete authentication flow:</p>
+        <button onclick="fullAuthTest()">Test Full Auth Flow</button>
+        <div id="full-test-result"></div>
+    </div>
+
+    <div class="test-step">
+        <h3>📊 Step 7: Check ngrok Requests</h3>
+        <p>Open ngrok web interface to see all requests:</p>
+        <button onclick="openNgrok()">Open ngrok Web Interface</button>
+        <p>Look for:</p>
+        <ul>
+            <li>GET /api/auth/signin/spotify → Should redirect to Spotify</li>
+            <li>GET /api/auth/callback/spotify → Should create session</li>
+            <li>GET /api/auth/session → Should return user data</li>
+        </ul>
+    </div>
+
+    <div class="test-step">
+        <h3>💡 Troubleshooting Tips</h3>
+        <ul>
+            <li><strong>Browser extensions can interfere</strong> - Try disabling them</li>
+            <li><strong>Use incognito mode</strong> - Avoids cache/cookie issues</li>
+            <li><strong>Check ngrok logs</strong> - http://localhost:4040 shows all requests</li>
+            <li><strong>Verify Spotify Dashboard</strong> - Redirect URI must match exactly</li>
+            <li><strong>Check terminal logs</strong> - NextAuth debug messages should appear</li>
+        </ul>
+    </div>
+
+    <script>
+        async function checkServer() {
+            const result = document.getElementById('server-result');
+            result.innerHTML = '<p>Checking server status...</p>';
+            
+            try {
+                const response = await fetch('/api/health');
+                if (response.ok) {
+                    result.innerHTML = '<div class="success">✅ Server is running!</div>';
+                } else {
+                    result.innerHTML = '<div class="error">❌ Server not responding</div>';
+                }
+            } catch (error) {
+                result.innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
+            }
+        }
+
+        function copyConfig() {
+            const config = `NEXTAUTH_URL: https://covalent-solely-elnora.ngrok-free.dev
+SPOTIFY_REDIRECT_URI: https://covalent-solely-elnora.ngrok-free.dev/api/auth/callback/spotify`;
+            
+            navigator.clipboard.writeText(config).then(() => {
+                alert('Configuration copied to clipboard!');
+            });
+        }
+
+        async function testSession() {
+            const result = document.getElementById('session-result');
+            result.innerHTML = '<p>Checking session...</p>';
+            
+            try {
+                const response = await fetch('/api/auth/session');
+                const data = await response.json();
+                
+                if (data.user) {
+                    result.innerHTML = '<div class="success">✅ Session active!</div><pre>' + 
+                                     JSON.stringify(data, null, 2) + '</pre>';
+                } else {
+                    result.innerHTML = '<div class="info">ℹ️ No active session</div>';
+                }
+            } catch (error) {
+                result.innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
+            }
+        }
+
+        function testSpotifyOAuth() {
+            const clientId = 'cff193fc95f94392947150b50f384e30';
+            const redirectUri = 'https://covalent-solely-elnora.ngrok-free.dev/api/auth/callback/spotify';
+            const scope = 'user-read-private user-read-email';
+            
+            const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}`;
+            
+            const result = document.getElementById('oauth-result');
+            result.innerHTML = `<p>Testing direct Spotify OAuth...</p>
+                              <pre>${authUrl}</pre>
+                              <p><a href="${authUrl}" target="_blank">Click to test OAuth</a></p>`;
+            
+            window.open(authUrl, '_blank');
+        }
+
+        function checkCookies() {
+            const result = document.getElementById('cookies-result');
+            const cookies = document.cookie;
+            
+            if (cookies) {
+                result.innerHTML = '<div class="success">✅ Cookies found!</div><pre>' + 
+                                 cookies.split(';').map(c => c.trim()).join('\n') + '</pre>';
+            } else {
+                result.innerHTML = '<div class="info">ℹ️ No cookies found</div>';
+            }
+        }
+
+        async function fullAuthTest() {
+            const result = document.getElementById('full-test-result');
+            result.innerHTML = '<p>Running full authentication test...</p>';
+            
+            // Test session first
+            const sessionResponse = await fetch('/api/auth/session');
+            const sessionData = await sessionResponse.json();
+            
+            if (sessionData.user) {
+                result.innerHTML += '<div class="success">✅ Already logged in!</div>';
+                return;
+            }
+            
+            // If not logged in, start OAuth flow
+            const authUrl = '/api/auth/signin/spotify';
+            result.innerHTML += `<p>Not logged in. Starting OAuth flow...</p>
+                               <p><a href="${authUrl}" target="_blank">Click to start Spotify login</a></p>`;
+            
+            window.open(authUrl, '_blank');
+        }
+
+        function openNgrok() {
+            window.open('http://localhost:4040', '_blank');
+        }
+    </script>
+</body>
+</html>
