@@ -50,20 +50,31 @@ export async function GET(request: Request) {
     if (response.ok) {
       // Store tokens in cookies and redirect to callback URL or agent page
       const callbackUrl = searchParams.get('callbackUrl') || '/agent';
-      const responseWithCookies = NextResponse.redirect(new URL(callbackUrl, request.url));
+
+      // For ngrok deployments, use the external URL instead of localhost
+      const baseUrl = REDIRECT_URI.startsWith('http')
+        ? REDIRECT_URI.replace('/api/auth/callback/spotify', '')
+        : new URL(request.url).origin;
+
+      const responseWithCookies = NextResponse.redirect(new URL(callbackUrl, baseUrl));
       
+      // Set secure based on whether we're using HTTPS (ngrok uses HTTP in free tier)
+      const isSecure = REDIRECT_URI.startsWith('https://');
+
+      console.log('Setting cookies, secure:', isSecure);
+
       responseWithCookies.cookies.set('spotify_access_token', data.access_token, {
         httpOnly: true,
-        secure: true,
+        secure: isSecure, // Only secure for HTTPS
         sameSite: 'lax',
         path: '/',
         maxAge: data.expires_in || 3600
       });
-      
+
       if (data.refresh_token) {
         responseWithCookies.cookies.set('spotify_refresh_token', data.refresh_token, {
           httpOnly: true,
-          secure: true,
+          secure: isSecure, // Only secure for HTTPS
           sameSite: 'lax',
           path: '/',
           maxAge: 60 * 60 * 24 * 30 // 30 days

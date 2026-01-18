@@ -15,6 +15,27 @@ import Link from 'next/link';
  * - shadcn/ui: ScrollArea, Button, Input, Avatar for polished UI.
  */
 
+/**
+ * Simple markdown-like formatter for chat messages
+ */
+function formatMessage(text) {
+  if (!text) return '';
+
+  return text
+    // Bold text **text**
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    // Italic text *text*
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    // Links [text](url)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-purple-300 hover:text-purple-100 underline">$1</a>')
+    // Numbered lists (1. Item)
+    .replace(/^(\d+)\.\s+(.+)$/gm, '<div class="ml-4">$1. $2</div>')
+    // Headers (## Header)
+    .replace(/^##\s+(.+)$/gm, '<h2 class="text-lg font-semibold mb-2">$1</h2>')
+    // Line breaks
+    .replace(/\n/g, '<br>');
+}
+
 export default function AgentChat() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -27,14 +48,17 @@ export default function AgentChat() {
   useEffect(() => {
     const checkAuth = async () => {
       try {
+        console.log('Checking authentication status...');
         const response = await fetch('/api/auth/check');
         const data = await response.json();
-        
+
+        console.log('Auth check response:', response.status, data);
+
         if (response.ok && data.authenticated) {
-          console.log('Authentication successful:', data);
+          console.log('✅ Authentication successful:', data);
           setIsAuthenticated(true);
         } else {
-          console.log('Authentication failed:', data);
+          console.log('❌ Authentication failed:', data);
           setIsAuthenticated(false);
         }
       } catch (error) {
@@ -44,7 +68,7 @@ export default function AgentChat() {
         setIsLoadingAuth(false);
       }
     };
-    
+
     checkAuth();
   }, []);
 
@@ -63,16 +87,63 @@ export default function AgentChat() {
     setInput('');
     setIsLoading(true);
 
-    // Mock agent response (replace with server action / LangChain call)
-    setTimeout(() => {
-      const agentResponse = {
+    try {
+      // Add timeout to prevent hanging requests
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000); // 30 second timeout
+
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: input }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      const data = await response.json();
+
+      console.log('API Response:', data);
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || `HTTP ${response.status}`);
+      }
+
+      const agentMessage = {
         role: 'assistant',
-        content: `🎵 Great idea! "${input}" → Suggesting songs like "Bohemian Rhapsody" by Queen. Want me to create a playlist? (Mock - real LangChain + Spotify tools coming!)`,
+        content: typeof data.message === 'string' ? data.message : JSON.stringify(data.message),
       };
-      setMessages((prev) => [...prev, agentResponse]);
+      setMessages((prev) => [...prev, agentMessage]);
+    } catch (error) {
+      console.error('Error sending message:', error);
+
+      let errorContent = '❌ Sorry, there was an error processing your request.';
+
+      if (error.name === 'AbortError') {
+        errorContent = '❌ Request timed out. Please try again.';
+      } else if (error.message) {
+        errorContent = `❌ Error: ${error.message}`;
+      }
+
+      const errorMessage = {
+        role: 'assistant',
+        content: errorContent,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
+
+  //   // Mock agent response (replace with server action / LangChain call)
+  //   setTimeout(() => {
+  //     const agentResponse = {
+  //       role: 'assistant',
+  //       content: `🎵 Great idea! "${input}" → Suggesting songs like "Bohemian Rhapsody" by Queen. Want me to create a playlist? (Mock - real LangChain + Spotify tools coming!)`,
+  //     };
+  //     setMessages((prev) => [...prev, agentResponse]);
+  //     setIsLoading(false);
+  //   }, 1500);
+  // };
 
   if (isLoadingAuth) return <div className="flex items-center justify-center h-64">Loading...</div>;
 
@@ -118,7 +189,12 @@ export default function AgentChat() {
             messages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-2xl p-4 rounded-2xl ${msg.role === 'user' ? 'bg-purple-600 text-white rounded-br-sm' : 'bg-white/10 backdrop-blur-sm rounded-bl-sm border border-white/20'}`}>
-                  <p>{msg.content}</p>
+                  <div
+                    className="prose prose-invert max-w-none"
+                    dangerouslySetInnerHTML={{
+                      __html: formatMessage(msg.content)
+                    }}
+                  />
                 </div>
               </div>
             ))
@@ -145,11 +221,11 @@ export default function AgentChat() {
             onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
             placeholder="Ask for song recs or &quot;create chill playlist&quot;..."
             className="flex-1 bg-white/10 border-white/30 text-white placeholder-purple-300 focus-visible:ring-purple-500 resize-none h-14"
-            disabled={!isAuthenticated || isLoading}
+            disabled={isLoading}
           />
           <Button
             onClick={sendMessage}
-            disabled={!isAuthenticated || !input.trim() || isLoading}
+            disabled={!input.trim() || isLoading}
             className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 px-8 font-semibold"
           >
             Send
