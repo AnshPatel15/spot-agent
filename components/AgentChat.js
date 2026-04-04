@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useSession, signIn } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import Link from 'next/link';
 
 /**
  * Interactive chat UI for the LangChain Spotify agent.
@@ -37,40 +37,14 @@ function formatMessage(text) {
 }
 
 export default function AgentChat() {
+  const { data: session, status } = useSession();
+  const isAuthenticated = !!session?.accessToken;
+  const isLoadingAuth = status === 'loading';
+
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
-
-  // Check authentication status
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        console.log('Checking authentication status...');
-        const response = await fetch('/api/auth/check');
-        const data = await response.json();
-
-        console.log('Auth check response:', response.status, data);
-
-        if (response.ok && data.authenticated) {
-          console.log('✅ Authentication successful:', data);
-          setIsAuthenticated(true);
-        } else {
-          console.log('❌ Authentication failed:', data);
-          setIsAuthenticated(false);
-        }
-      } catch (error) {
-        console.error('Auth check error:', error);
-        setIsAuthenticated(false);
-      } finally {
-        setIsLoadingAuth(false);
-      }
-    };
-
-    checkAuth();
-  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -165,9 +139,12 @@ export default function AgentChat() {
                 <span>Connected to Spotify</span>
               </div>
             ) : (
-              <Link href="/auth/signin">
-                <Button className="bg-purple-600 hover:bg-purple-700">Sign In</Button>
-              </Link>
+              <Button
+                onClick={() => signIn('spotify', { callbackUrl: '/agent' })}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                Sign In
+              </Button>
             )}
           </div>
         </div>

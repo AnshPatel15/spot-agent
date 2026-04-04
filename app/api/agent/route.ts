@@ -4,8 +4,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { processMusicMessage, simpleMusicChat } from '../../../lib/agents/musicAgent';
-// import { getServerSession } from 'next-auth/next'; // Commented out - will use direct token handling
 
 // Simple in-memory storage for chat history (in production, use a database)
 const chatHistory = new Map<string, Array<{role: string, content: string}>>();
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { message, sessionId = 'default', useSpotify = false } = body;
 
-    console.log('Request body:', { message: message?.substring(0, 100), sessionId, useSpotify });
+    // console.log('Request body:', { message: message?.substring(0, 100), sessionId, useSpotify });
 
     if (!message || typeof message !== 'string') {
       console.log('Invalid message format');
@@ -38,17 +39,9 @@ export async function POST(request: NextRequest) {
 
     console.log('OPENROUTER_API_KEY is set, proceeding...');
 
-    // Check for access token in request body or cookies
-    let accessToken = body.accessToken as string | undefined;
-
-    // If no token in body, check cookies
-    if (!accessToken) {
-      const cookieToken = (request as any).cookies?.get?.('spotify_access_token')?.value;
-      if (cookieToken) {
-        accessToken = cookieToken;
-        console.log('Using access token from cookies');
-      }
-    }
+    // Get Spotify access token from session
+    const session = await getServerSession(authOptions);
+    const accessToken = session?.accessToken;
 
     let response;
 
