@@ -142,6 +142,8 @@ export default function AgentChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -155,29 +157,79 @@ export default function AgentChat() {
     setMessages((prev) => [...prev, { role: 'user', content }]);
     setInput('');
     setIsLoading(true);
+    setIsStreaming(false);
+    setStatusMessage('');
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 90_000);
+      const timeoutId = setTimeout(() => controller.abort(), 180_000);
 
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({
+          message: content,
+          // Send previous turns so the agent has context for follow-up questions
+          history: messages.map(({ role, content: c }) => ({ role, content: c })),
+        }),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: typeof data.message === 'string' ? data.message : JSON.stringify(data.message),
-        },
-      ]);
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          if (!part.startsWith('data: ')) continue;
+          let parsed: Record<string, unknown>;
+          try { parsed = JSON.parse(part.slice(6)); } catch { continue; }
+
+          if (parsed.type === 'token') {
+            const text = parsed.content as string;
+            setIsStreaming(true);
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === 'assistant') {
+                return [...prev.slice(0, -1), { ...last, content: last.content + text }];
+              }
+              // First token — create the bubble now
+              return [...prev, { role: 'assistant', content: text }];
+            });
+          } else if (parsed.type === 'status') {
+            setStatusMessage(parsed.message as string);
+          } else if (parsed.type === 'error') {
+            setMessages((prev) => [
+              ...prev,
+              { role: 'assistant', content: parsed.message as string, isError: true },
+            ]);
+          } else if (parsed.type === 'done') {
+            setStatusMessage('');
+          }
+        }
+      }
+
+      // If no tokens arrived at all, show an error
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && !last.content) {
+          return [...prev.slice(0, -1), { role: 'assistant', content: 'No response received. Please try again.', isError: true }];
+        }
+        return prev;
+      });
     } catch (err) {
       const error = err as Error;
       setMessages((prev) => [
@@ -193,6 +245,8 @@ export default function AgentChat() {
       ]);
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
+      setStatusMessage('');
     }
   };
 
@@ -322,16 +376,19 @@ export default function AgentChat() {
                 </div>
               ))}
 
-              {/* Typing indicator */}
-              {isLoading && (
+              {/* Typing indicator — visible while waiting for the first token */}
+              {isLoading && !isStreaming && (
                 <div className="flex gap-3">
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                     <Music2 className="size-4 text-primary" />
                   </div>
-                  <div className="flex items-center gap-1 rounded-2xl rounded-tl-sm border border-border/50 bg-card/80 px-4 py-3 backdrop-blur-sm">
+                  <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-border/50 bg-card/80 px-4 py-3 backdrop-blur-sm">
                     <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.3s]" />
                     <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.15s]" />
                     <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
+                    {statusMessage && (
+                      <span className="ml-2 text-xs text-muted-foreground">{statusMessage}</span>
+                    )}
                   </div>
                 </div>
               )}

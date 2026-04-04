@@ -3,191 +3,169 @@
  * Handles Spotify API interactions and provides music recommendations
  */
 
-import { ChatOpenAI } from '@langchain/openai';
 import { createBasicLLM } from '../llms/openrouter.js';
 import { spotifyTools } from '../tools/spotify-tool';
+import { lastfmTools } from '../tools/lastfm-tool';
+import {
+  HumanMessage,
+  AIMessage,
+  SystemMessage,
+  ToolMessage,
+  BaseMessage,
+} from '@langchain/core/messages';
 
-/**
- * Process a user message with Spotify tools
- * @param {string} message - User message
- * @param {string} accessToken - Spotify access token
- * @returns {Promise<Object>} Agent response
- */
-export async function processMusicMessage(message: string, accessToken?: string) {
-  try {
-    const llm = createBasicLLM();
+type SendFn = (data: Record<string, unknown>) => void;
+type HistoryMessage = { role: 'user' | 'assistant'; content: string };
 
-    // Bind tools to LLM
-    const llmWithTools = llm.bindTools(spotifyTools);
+function extractTextContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((c: any) => c.type === 'text')
+      .map((c: any) => c.text ?? '')
+      .join('');
+  }
+  return '';
+}
 
-    const systemPrompt = `You are a helpful music assistant that can search Spotify, get track information, create playlists, and provide music recommendations.
+const allTools = [...spotifyTools, ...lastfmTools];
 
-You have access to Spotify's API through various tools. Always call tools to provide real data — never fabricate track names or artists.
+const SYSTEM_PROMPT = `You are a helpful music assistant connected to both Last.fm and Spotify.
+
+Always call tools to provide real data — never fabricate track names or artists.
 
 ## Tool selection guide
 
-**Mood / vibe requests** ("songs for a late-night drive", "upbeat workout music", "chill study beats"):
-→ Use search_spotify_playlists with a descriptive mood/vibe keyword to find curated playlists,
-  then call get_spotify_playlist_tracks on the most relevant result to extract the actual songs.
-  Example: query "late night drive chill" → get tracks from the top playlist result.
-  Pick 2–3 playlists and combine tracks for variety if needed.
+**Mood / vibe requests** ("songs for a late-night drive", "chill study beats", "happy workout music"):
+→ Use get_lastfm_tag_tracks with the closest mood tag (e.g. "night driving", "chill", "study", "workout").
+  Then offer to search Spotify for the results or create a playlist.
+
+**"Artists like X" / "similar to X artist"**:
+→ Use get_lastfm_similar_artists, then search_spotify_tracks for their songs.
+
+**"Songs like [track] by [artist]"**:
+→ Use get_lastfm_similar_tracks.
 
 **Album track listing** ("what songs are on X album"):
-→ Use search_spotify_albums to find the album, then immediately call get_spotify_album_tracks.
+→ Use search_spotify_albums then get_spotify_album_tracks immediately.
 
-**Direct search** ("find tracks by Artist", "search for Song Name"):
+**Direct Spotify search** ("find tracks by Artist", "search for Song Name"):
 → Use search_spotify_tracks.
 
-**Creating a playlist from suggestions**:
-→ First gather track URIs using the search/playlist tools, then call create_spotify_playlist
-  followed by add_tracks_to_spotify_playlist.
+**Playlist-based browsing** ("songs from the Lo-fi Chill playlist"):
+→ Use search_spotify_playlists then get_spotify_playlist_tracks.
+
+**Creating a Spotify playlist from suggestions**:
+→ Gather track URIs with search_spotify_tracks, then create_spotify_playlist + add_tracks_to_spotify_playlist.
 
 Available tools:
-- search_spotify_playlists: Find curated playlists by mood/genre/activity keyword (PRIMARY for mood queries)
-- get_spotify_playlist_tracks: Get songs from a specific playlist
-- search_spotify_tracks: Search for individual tracks
-- search_spotify_albums: Search for albums
-- get_spotify_album_tracks: Get all tracks from an album
-- get_spotify_track_details: Get detailed info for a specific track
-- create_spotify_playlist: Create a new playlist
-- add_tracks_to_spotify_playlist: Add tracks to a playlist
-- get_spotify_user_profile: Get user profile`;
+Last.fm (recommendations):
+- get_lastfm_tag_tracks: Top tracks by mood/genre tag — PRIMARY for mood queries
+- get_lastfm_similar_artists: Artists similar to a given artist
+- get_lastfm_similar_tracks: Tracks similar to a specific song
 
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: message }
-    ];
+Spotify (library & playlists):
+- search_spotify_tracks: Search for tracks
+- search_spotify_albums / get_spotify_album_tracks: Album track listings
+- search_spotify_playlists / get_spotify_playlist_tracks: Browse playlists
+- create_spotify_playlist / add_tracks_to_spotify_playlist: Create playlists
+- get_spotify_track_details / get_spotify_user_profile: Details & profile`;
 
-    console.log('Invoking LLM with tools...');
-    const response = await llmWithTools.invoke(messages);
-    console.log('LLM response:', response);
-    console.log('Tool calls:', response.tool_calls);
-
-    // Check if tools were called
-    if (response.tool_calls && response.tool_calls.length > 0) {
-      // Execute the tools and get results
-      const toolResults = [];
-      let foundAlbum = null;
-      let shouldGetTracks = message.toLowerCase().includes('songs') ||
-                           message.toLowerCase().includes('tracks') ||
-                           message.toLowerCase().includes('list');
-
-      for (const toolCall of response.tool_calls) {
-        const tool = spotifyTools.find(t => t.name === toolCall.name);
-        if (tool) {
-          try {
-            // Add access token to tool arguments
-            const toolArgs = {
-              ...toolCall.args,
-              accessToken: accessToken,
-            };
-            const result = await (tool as any).func(toolArgs);
-            toolResults.push({
-              tool: toolCall.name,
-              result: result,
-            });
-
-            // If this was an album search and user wants tracks, store the album for later
-            if (toolCall.name === 'search_spotify_albums' && shouldGetTracks && result.success && result.albums?.length > 0) {
-              foundAlbum = result.albums[0]; // Take the first (most relevant) album
-            }
-          } catch (error) {
-            toolResults.push({
-              tool: toolCall.name,
-              error: error instanceof Error ? error.message : 'Tool execution failed',
-            });
-          }
-        }
-      }
-
-      // If we found an album and user wants tracks, automatically get the tracks
-      if (foundAlbum && shouldGetTracks) {
-        console.log('Automatically fetching tracks for album:', foundAlbum.name);
-        try {
-          const tracksTool = spotifyTools.find(t => t.name === 'get_spotify_album_tracks');
-          if (tracksTool) {
-            const tracksResult = await (tracksTool as any).func({
-              albumId: foundAlbum.id,
-              accessToken: accessToken,
-            });
-            toolResults.push({
-              tool: 'get_spotify_album_tracks',
-              result: tracksResult,
-            });
-          }
-        } catch (error) {
-          toolResults.push({
-            tool: 'get_spotify_album_tracks',
-            error: error instanceof Error ? error.message : 'Failed to get album tracks',
-          });
-        }
-      }
-
-      // Generate final response with tool results
-      const toolResultsText = toolResults.map(tr =>
-        `Tool: ${tr.tool}\nResult: ${tr.result ? JSON.stringify(tr.result, null, 2) : tr.error}`
-      ).join('\n\n');
-
-      const finalPrompt = `${systemPrompt}
-
-Tool Results:
-${toolResultsText}
-
-Based on the above tool results, provide a helpful response to the user's query: "${message}"`;
-
-      const finalResponse = await llm.invoke(finalPrompt);
-      return {
-        success: true,
-        response: finalResponse.content,
-        toolResults: toolResults,
-      };
-    } else {
-      // No tools called, return direct response
-      return {
-        success: true,
-        response: response.content,
-      };
-    }
-  } catch (error) {
-    console.error('Music agent error:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred',
-      response: 'Sorry, I encountered an error while processing your request. Please try again.',
-    };
-  }
-}
-
-
+const TOOL_STATUS: Record<string, string> = {
+  get_lastfm_tag_tracks:          'Finding tracks by mood…',
+  get_lastfm_similar_artists:     'Finding similar artists…',
+  get_lastfm_similar_tracks:      'Finding similar tracks…',
+  search_spotify_playlists:       'Searching playlists…',
+  get_spotify_playlist_tracks:    'Getting tracks…',
+  search_spotify_tracks:          'Searching tracks…',
+  search_spotify_albums:          'Searching albums…',
+  get_spotify_album_tracks:       'Getting album tracks…',
+  get_spotify_track_details:      'Getting track details…',
+  create_spotify_playlist:        'Creating playlist…',
+  add_tracks_to_spotify_playlist: 'Adding tracks to playlist…',
+  get_spotify_user_profile:       'Getting profile…',
+};
 
 /**
- * Simple chat function without full agent setup (for basic responses)
- * @param {string} message - User message
- * @returns {Promise<string>} LLM response
+ * Proper agentic loop — supports multi-step tool calling.
+ * Uses LangChain typed messages (HumanMessage, AIMessage, ToolMessage) throughout
+ * so the conversation format is consistent across all rounds.
  */
-export async function simpleMusicChat(message: string): Promise<string> {
-  console.log('Simple chat called with message:', message);
+export async function processMusicMessageStream(
+  message: string,
+  accessToken: string | undefined,
+  send: SendFn,
+  history: HistoryMessage[] = []
+): Promise<void> {
+  const llm = createBasicLLM();
+  const llmWithTools = llm.bindTools(allTools);
 
-  try {
-    console.log('Creating LLM instance...');
-    const llm = createBasicLLM();
-    console.log('LLM instance created');
+  // Build typed conversation — includes previous turns for follow-up context
+  const conversation: BaseMessage[] = [
+    new SystemMessage(SYSTEM_PROMPT),
+    ...history.map(msg =>
+      msg.role === 'user' ? new HumanMessage(msg.content) : new AIMessage(msg.content)
+    ),
+    new HumanMessage(message),
+  ];
 
-    const prompt = `You are a music assistant. Respond helpfully to: ${message}
+  const MAX_ROUNDS = 5;
 
-Keep your response conversational and engaging. If the user is asking about specific music, suggest they connect their Spotify account for more detailed information.`;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    send({ type: 'status', message: round === 0 ? 'Thinking…' : 'Continuing…' });
 
-    console.log('Invoking LLM with prompt length:', prompt.length);
-    const response = await llm.invoke(prompt);
-    console.log('LLM response received:', typeof response, response);
+    let response: AIMessage;
+    try {
+      response = (await llmWithTools.invoke(conversation)) as AIMessage;
+    } catch (err) {
+      send({ type: 'error', message: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` });
+      return;
+    }
 
-    const content = response.content as string;
-    console.log('Response content:', content);
+    // No tool calls = final text response — send content directly (no extra LLM call)
+    if (!response.tool_calls?.length) {
+      const content = extractTextContent(response.content);
+      if (content) {
+        send({ type: 'token', content });
+      } else {
+        send({ type: 'error', message: 'No response generated. Please try again.' });
+      }
+      return;
+    }
 
-    return content;
-  } catch (error) {
-    console.error('Simple chat error:', error);
-    console.error('Error details:', error instanceof Error ? error.message : String(error), error instanceof Error ? error.stack : undefined);
-    return 'Sorry, I encountered an error. Please try again.';
+    // Add the AI's tool-call message using its native typed form
+    conversation.push(response);
+
+    // Execute each tool and append results as typed ToolMessages
+    for (let i = 0; i < response.tool_calls.length; i++) {
+      const toolCall = response.tool_calls[i];
+      send({ type: 'status', message: TOOL_STATUS[toolCall.name] ?? 'Working…' });
+
+      const tool = allTools.find(t => t.name === toolCall.name);
+      let toolResult: unknown;
+
+      if (tool) {
+        try {
+          toolResult = await (tool as any).func({ ...toolCall.args, accessToken });
+        } catch (err) {
+          toolResult = { error: err instanceof Error ? err.message : 'Tool execution failed' };
+        }
+      } else {
+        toolResult = { error: `Unknown tool: ${toolCall.name}` };
+      }
+
+      // Ensure we always have a valid tool_call_id and string content
+      const toolCallId = toolCall.id ?? `call_${Date.now()}_${i}`;
+      const resultContent = JSON.stringify(toolResult) ?? 'null';
+
+      conversation.push(
+        new ToolMessage({ tool_call_id: toolCallId, content: resultContent })
+      );
+    }
   }
+
+  // Safety net if max rounds exceeded
+  send({ type: 'error', message: 'The agent took too many steps. Please try a simpler query.' });
 }
+
+
