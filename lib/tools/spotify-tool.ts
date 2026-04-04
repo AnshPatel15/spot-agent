@@ -5,7 +5,7 @@
 
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { getSpotifyClient, searchTracks, getTrackDetails, createPlaylist, addTracksToPlaylist, getUserProfile } from './spotify';
+import { getSpotifyClient, searchTracks, getTrackDetails, createPlaylist, addTracksToPlaylist, getUserProfile, getPlaylistTracks, getRecommendations } from './spotify';
 
 /**
  * Tool for searching Spotify tracks
@@ -315,6 +315,163 @@ export const getSpotifyUserProfile = tool(async ({ accessToken }) => {
 });
 
 /**
+ * Search for playlists by name for suggestions
+ */
+export const searchSpotifyPlaylists = tool(async ({ query, limit = 5, accessToken }) => {
+  try {
+    if (!accessToken) {
+      return {
+        success: false,
+        error: 'Spotify access token required. Please sign in with Spotify to search playlists.',
+        playlists: [],
+        message: 'To search playlists on Spotify, you need to connect your Spotify account.',
+      };
+    }
+
+    const spotifyApi = getSpotifyClient(accessToken);
+    const response = await spotifyApi.searchPlaylists(query, { limit });
+    return {
+      success: true,
+      playlists: response.body.playlists?.items.map(playlist => ({
+        id: playlist.id,
+        name: playlist.name,
+        description: playlist.description,
+        owner: playlist.owner.display_name,
+        uri: playlist.uri,
+        external_urls: playlist.external_urls,
+      })) || [],
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      playlists: [],
+    };
+  }
+}, {
+  name: 'search_spotify_playlists',
+  description: 'Search for Spotify playlists by name or mood keyword. Use this to find curated playlists, then call get_spotify_playlist_tracks to extract songs from them.',
+  schema: z.object({
+    query: z.string().describe('Search query for playlists (mood, genre, activity, etc.)'),
+    limit: z.number().optional().default(5).describe('Maximum number of results to return'),
+    accessToken: z.string().optional().describe('Spotify access token'),
+  }),
+});
+
+/**
+ * Get tracks from a specific playlist
+ */
+export const getSpotifyPlaylistTracks = tool(async ({ playlistId, limit = 20, accessToken }) => {
+  try {
+    if (!accessToken) {
+      return { success: false, error: 'Spotify access token required.', tracks: [] };
+    }
+    const spotifyApi = getSpotifyClient(accessToken);
+    const tracks = await getPlaylistTracks(spotifyApi, playlistId, limit);
+    return {
+      success: true,
+      tracks: tracks.map(track => ({
+        id: track.id,
+        name: track.name,
+        artists: track.artists.map(a => a.name),
+        album: track.album.name,
+        uri: track.uri,
+        external_urls: track.external_urls,
+        duration_ms: track.duration_ms,
+      })),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      tracks: [],
+    };
+  }
+}, {
+  name: 'get_spotify_playlist_tracks',
+  description: 'Get tracks from a Spotify playlist by its ID. Use after search_spotify_playlists to retrieve the actual songs inside a curated playlist.',
+  schema: z.object({
+    playlistId:  z.string().describe('Spotify playlist ID'),
+    limit:       z.number().optional().default(20).describe('Maximum number of tracks to return'),
+    accessToken: z.string().optional().describe('Spotify access token'),
+  }),
+});
+
+/**
+ * Get mood-based recommendations via Spotify's recommendations endpoint.
+ * This is the preferred approach for mood queries — maps directly to audio features
+ * without needing to scrape playlists.
+ */
+export const getSpotifyRecommendations = tool(
+  async ({ seedGenres, seedTracks, seedArtists, targetEnergy, targetValence, targetDanceability, targetTempo, limit = 10, accessToken }) => {
+    if (!accessToken) {
+      return { success: false, error: 'Spotify access token required.', tracks: [] };
+    }
+    const totalSeeds = (seedGenres?.length ?? 0) + (seedTracks?.length ?? 0) + (seedArtists?.length ?? 0);
+    if (totalSeeds === 0) {
+      return { success: false, error: 'Provide at least one seed (genre, track, or artist).', tracks: [] };
+    }
+    try {
+      const spotifyApi = getSpotifyClient(accessToken);
+      const options: Record<string, unknown> = { limit };
+      if (seedGenres?.length)          options.seed_genres         = seedGenres.slice(0, 5);
+      if (seedTracks?.length)          options.seed_tracks         = seedTracks.slice(0, 5);
+      if (seedArtists?.length)         options.seed_artists        = seedArtists.slice(0, 5);
+      if (targetEnergy != null)        options.target_energy       = targetEnergy;
+      if (targetValence != null)       options.target_valence      = targetValence;
+      if (targetDanceability != null)  options.target_danceability = targetDanceability;
+      if (targetTempo != null)         options.target_tempo        = targetTempo;
+
+      const tracks = await getRecommendations(
+        spotifyApi,
+        options as Parameters<typeof spotifyApi.getRecommendations>[0]
+      );
+      return {
+        success: true,
+        tracks: tracks.map(track => ({
+          id: track.id,
+          name: track.name,
+          artists: track.artists.map(a => a.name),
+          album: track.album.name,
+          uri: track.uri,
+          external_urls: track.external_urls,
+          duration_ms: track.duration_ms,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        tracks: [],
+      };
+    }
+  },
+  {
+    name: 'get_spotify_recommendations',
+    description: `Get Spotify track recommendations based on mood, genre, or seed tracks/artists.
+PREFER THIS over playlist search for mood-based requests. Map mood to audio features:
+- Happy/euphoric     → high valence (0.8+), high energy (0.7+)
+- Sad/melancholic    → low valence (0.2-), low energy (0.3-)
+- Calm/focus/study   → low-medium energy (0.2–0.4), medium valence
+- Energetic/workout  → high energy (0.8+), high danceability (0.8+)
+- Late-night/chill   → low tempo (60–90 BPM), low energy (0.3–0.5)
+- Romantic           → medium energy (0.4–0.6), high valence (0.6+)
+Example seed genres: pop, rock, hip-hop, jazz, electronic, classical, indie, r-n-b, chill, study, ambient`,
+    schema: z.object({
+      seedGenres:         z.array(z.string()).optional().describe('Up to 5 Spotify genre seeds'),
+      seedTracks:         z.array(z.string()).optional().describe('Up to 5 Spotify track IDs as seeds'),
+      seedArtists:        z.array(z.string()).optional().describe('Up to 5 Spotify artist IDs as seeds'),
+      targetEnergy:       z.number().min(0).max(1).optional().describe('Target energy 0.0–1.0'),
+      targetValence:      z.number().min(0).max(1).optional().describe('Target positiveness 0.0–1.0'),
+      targetDanceability: z.number().min(0).max(1).optional().describe('Target danceability 0.0–1.0'),
+      targetTempo:        z.number().optional().describe('Target tempo in BPM'),
+      limit:              z.number().optional().default(10).describe('Number of tracks (max 100)'),
+      accessToken:        z.string().optional().describe('Spotify access token'),
+    }),
+  }
+);
+
+/**
  * Array of all Spotify tools for easy import
  */
 export const spotifyTools = [
@@ -325,4 +482,7 @@ export const spotifyTools = [
   searchSpotifyAlbums,
   getSpotifyAlbumTracks,
   getSpotifyUserProfile,
+  searchSpotifyPlaylists,
+  getSpotifyPlaylistTracks,
+  // getSpotifyRecommendations — removed: Spotify deprecated this endpoint for apps created after Nov 27 2024 (returns 404)
 ];

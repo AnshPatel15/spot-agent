@@ -95,3 +95,33 @@ export async function getUserProfile(spotifyApi: SpotifyWebApi) {
     return null;
   }
 }
+
+/**
+ * Get tracks from a playlist
+ */
+export async function getPlaylistTracks(spotifyApi: SpotifyWebApi, playlistId: string, limit = 20) {
+  try {
+    const response = await spotifyApi.getPlaylistTracks(playlistId, { limit });
+    return response.body.items.filter(item => item.track).map(item => item.track!);
+  } catch (error) {
+    console.error('Spotify get playlist tracks error:', error);
+    return [];
+  }
+}
+
+/**
+ * Get Spotify recommendations based on seeds and audio feature targets.
+ * Best approach for mood-based song suggestions.
+ */
+export async function getRecommendations(
+  spotifyApi: SpotifyWebApi,
+  options: Parameters<typeof spotifyApi.getRecommendations>[0]
+) {
+  try {
+    const response = await spotifyApi.getRecommendations(options);
+    return response.body.tracks;
+  } catch (error) {
+    console.error('Spotify recommendations error:', error);
+    return [];
+  }
+}

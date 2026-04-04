@@ -22,27 +22,36 @@ export async function processMusicMessage(message: string, accessToken?: string)
 
     const systemPrompt = `You are a helpful music assistant that can search Spotify, get track information, create playlists, and provide music recommendations.
 
-You have access to Spotify's API through various tools. When a user asks about music, artists, albums, or songs, use the appropriate Spotify tools to provide accurate information.
+You have access to Spotify's API through various tools. Always call tools to provide real data — never fabricate track names or artists.
 
-CRITICAL: When users ask for songs/tracks from a specific album, you MUST:
-1. First call search_spotify_albums to find the album
-2. Then immediately call get_spotify_album_tracks with the album ID to get the complete track list
-3. Present the track list with song names, artists, track numbers, and durations
+## Tool selection guide
 
-Always be helpful and engaging. If you need to use Spotify tools, make sure you have the access token available. If something goes wrong, explain what happened and suggest alternatives.
+**Mood / vibe requests** ("songs for a late-night drive", "upbeat workout music", "chill study beats"):
+→ Use search_spotify_playlists with a descriptive mood/vibe keyword to find curated playlists,
+  then call get_spotify_playlist_tracks on the most relevant result to extract the actual songs.
+  Example: query "late night drive chill" → get tracks from the top playlist result.
+  Pick 2–3 playlists and combine tracks for variety if needed.
+
+**Album track listing** ("what songs are on X album"):
+→ Use search_spotify_albums to find the album, then immediately call get_spotify_album_tracks.
+
+**Direct search** ("find tracks by Artist", "search for Song Name"):
+→ Use search_spotify_tracks.
+
+**Creating a playlist from suggestions**:
+→ First gather track URIs using the search/playlist tools, then call create_spotify_playlist
+  followed by add_tracks_to_spotify_playlist.
 
 Available tools:
-- search_spotify_tracks: Search for individual tracks by query
-- search_spotify_albums: Search for albums by query (use this when users mention specific albums)
-- get_spotify_album_tracks: Get all tracks from a specific album (ALWAYS call this after finding an album to show the track list)
-- get_spotify_track_details: Get detailed information about a specific track
+- search_spotify_playlists: Find curated playlists by mood/genre/activity keyword (PRIMARY for mood queries)
+- get_spotify_playlist_tracks: Get songs from a specific playlist
+- search_spotify_tracks: Search for individual tracks
+- search_spotify_albums: Search for albums
+- get_spotify_album_tracks: Get all tracks from an album
+- get_spotify_track_details: Get detailed info for a specific track
 - create_spotify_playlist: Create a new playlist
-- add_tracks_to_spotify_playlist: Add tracks to an existing playlist
-- get_spotify_user_profile: Get user profile information
-
-When searching for music, provide relevant details like artist names, album names, track numbers, and direct links when possible.
-
-IMPORTANT: Never just mention that you'll get tracks - actually call the get_spotify_album_tracks tool immediately after finding an album.`;
+- add_tracks_to_spotify_playlist: Add tracks to a playlist
+- get_spotify_user_profile: Get user profile`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
