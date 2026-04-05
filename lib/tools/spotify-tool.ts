@@ -46,7 +46,7 @@ export const searchSpotifyTracks = tool(async ({ query, limit = 5, accessToken }
   }
 }, {
   name: 'search_spotify_tracks',
-  description: 'Search for tracks on Spotify by query. Returns track information including name, artists, album, and Spotify URI. Requires Spotify authentication.',
+  description: 'Search for tracks on Spotify by query. Returns track information including name, artists, album, and Spotify URI. Supports Spotify search filters in the query string — e.g. "hip hop year:2026" to filter by release year, "artist:Drake", "genre:hip-hop". Requires Spotify authentication.',
   schema: z.object({
     query: z.string().describe('Search query for tracks (song name, artist, album, etc.)'),
     limit: z.number().optional().default(5).describe('Maximum number of results to return'),
